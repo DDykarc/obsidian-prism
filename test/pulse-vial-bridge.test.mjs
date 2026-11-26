@@ -1621,3 +1621,98 @@ test('WO-MAIN-001B: pulse-vial-bridge writes data-pv-warn="1" at >=80% and clear
     if (prevDoc !== undefined) globalThis.document = prevDoc;
   }
 });
+
+test('inline-fallback renders 5h and weekly quota chips in composer bar, hides unavailable windows, warns at <=35%/<=15%, and opens context card on click', async () => {
+  const inlineMod = require('../vendor/pulse-dashboard/inline-fallback.js');
+  const env = createPulseMockEnv();
+  const footer = env.doc.createElement('div');
+  footer.className = 'agy-composer-footer flex items-center';
+  footer.appendChild(env.doc.createElement('div'));
+  footer.appendChild(env.doc.createElement('button'));
+  env.doc.body.appendChild(footer);
+
+  let mockGroups = [
+    {
+      id: 'gemini',
+      name: 'Gemini',
+      windows: {
+        '5h': { available: true, remaining: 0.92, resetAt: Date.now() + 2 * 3600 * 1000 },
+        weekly: { available: true, remaining: 0.34, resetAt: Date.now() + 3 * 86400 * 1000 },
+      },
+    },
+    {
+      id: 'claude',
+      name: 'Claude / GPT',
+      windows: {
+        '5h': { available: true, remaining: 0.14, resetAt: Date.now() + 3600 * 1000 },
+        weekly: { available: false, reason: 'unavailable' },
+      },
+    },
+  ];
+  let mockModel = 'Gemini 4 Hydrogen (High)';
+
+  env.win.__agPrismMetricsCall = (payloadStr) => {
+    const req = JSON.parse(payloadStr);
+    env.win.__agPrismMetricsResolve?.(req.id, {
+      connection: 'live',
+      speed: {
+        model: mockModel,
+        tps: 64.2,
+        latestTps: 64.2,
+        ttftSeconds: 0.9,
+        cacheHitRate: 0.95,
+        context: { model: mockModel, usedFraction: 0.38, usedTokens: 194560, maxTokens: 512000, sampledAt: Date.now() },
+      },
+      groups: mockGroups,
+    });
+  };
+
+  const ctrl = inlineMod.createTelemetryController({ window: env.win, document: env.doc });
+  try {
+    ctrl.sync({ telemetryModule: 'on', language: 'zh-CN' });
+    await ctrl.refresh();
+
+    const bar = env.doc.getElementById('ag-prism-pulse-bar');
+    assert.ok(bar && bar.shadowRoot);
+    const sr = bar.shadowRoot;
+    const fChip = sr.querySelector('[data-card="five"]');
+    const wChip = sr.querySelector('[data-card="week"]');
+    const sChip = sr.querySelector('[data-card="speed"]');
+    assert.ok(fChip && wChip && sChip);
+
+    const barChildren = sr.querySelector('.bar').children;
+    assert.equal(barChildren[0], fChip, '5h quota chip sits first in bar (left of speed)');
+    assert.equal(barChildren[1], wChip, 'weekly quota chip sits before speed chip');
+    assert.equal(barChildren[2], sChip);
+
+    assert.equal(fChip.hidden, false);
+    assert.equal(sr.getElementById('five-balance').textContent, '92%');
+    assert.equal(fChip.getAttribute('data-warn'), null);
+
+    assert.equal(wChip.hidden, false);
+    assert.equal(sr.getElementById('week-balance').textContent, '34%');
+    assert.equal(wChip.getAttribute('data-warn'), '1', '<= 35% must mark data-warn="1"');
+    assert.ok((wChip.getAttribute('title') || '').includes('周 34%'));
+
+    // Click weekly chip -> opens context/quota detail card cleanly
+    const ctxCard = sr.getElementById('context-card');
+    assert.equal(ctxCard.hidden, true);
+    wChip.dispatchEvent({ type: 'click' });
+    assert.equal(ctxCard.hidden, false, 'clicking quota chip opens detail card');
+    assert.equal(wChip.getAttribute('aria-expanded'), 'true');
+
+    // Switch active model to Claude (critical 5h 14%, unavailable weekly)
+    mockModel = 'Claude Opus';
+    await ctrl.refresh();
+    assert.equal(sr.getElementById('five-balance').textContent, '14%');
+    assert.equal(fChip.getAttribute('data-warn'), '2', '<= 15% must mark data-warn="2"');
+    assert.equal(wChip.hidden, true, 'unavailable weekly window must hide week chip');
+
+    // Responsive TIER_CSS retains fold hooks for week (tier 3) and five (tier 4)
+    const cssText = sr.querySelector('style').textContent;
+    assert.ok(cssText.includes('[data-card="week"]'), 'shadow CSS must keep tier-3 fold rule for week chip');
+    assert.ok(cssText.includes('[data-card="five"]'), 'shadow CSS must keep tier-4 fold rule for five chip');
+  } finally {
+    ctrl.destroy();
+  }
+});
