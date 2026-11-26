@@ -1150,7 +1150,7 @@
 
   // ── Composer Prism Box, Placeholder, Glyph & Mascot Clearance ──────────
   const T_TK = 'interaction-takeover-card', T_RP = 'running-items-panel', T_QM = 'queued-messages-card', T_SQ = 'side-question-panel', S_RP = '[data-testid="running-items-panel"]', S_IB = '[data-testid="agent-input-box"]', S_SUB = '[data-testid="subagent-tab-conversation"]';
-  const TK_SEL = '[data-testid="interaction-takeover-card"], [data-testid="side-question-panel"]', A_Q = 'data-ag-cs-queued', A_QA = 'data-ag-queued-act', A_TK = 'data-ag-cs-takeover', A_TKO = A_TK + '-open', A_PB = 'data-ag-cs-prism-box', A_PM = 'data-ag-cs-prism-mirror';
+  const TK_SEL = '[data-testid="interaction-takeover-card"], [data-testid="side-question-panel"]', A_Q = 'data-ag-cs-queued', A_QA = 'data-ag-queued-act', A_TK = 'data-ag-cs-takeover', A_TKO = A_TK + '-open', A_TT = 'data-ag-cs-top-toolbar', S_TB = '[data-testid="input-box-bottom-toolbar"]', A_PB = 'data-ag-cs-prism-box', A_PM = 'data-ag-cs-prism-mirror';
   const seenClrWraps = new WeakSet();
   const setClr = (el, a, on, gap = '46px') => {
     if (!el) return;
@@ -1210,10 +1210,23 @@
     let _lay, low = false, visTk = false, queuedAnchor = null;
     const getLay = () => (_lay ??= (card?.offsetHeight || rc(card)?.height || 0) > 0), sh = cl(card, '#antigravity\\.agentSidePanelInputBox') || card[K_PE], ops = [];
     const pq = (el, ok) => { const on = ea && ok && !low; ops.push([el, A_Q, on, '46px']); if (on) low = true; };
-    if (sh && sh !== ib) for (const ch of sh.children || []) {
-      if (ch === card) break;
-      const p = tidOf(ch) === T_RP ? ch : qs(ch, S_RP);
-      pq(ch, !!(p && isRunOpen(p) && !isHidEl(ch, false, m) && !isHidEl(p, false, m)));
+    if (sh && sh !== ib) {
+      let seenTt = false;
+      for (const ch of sh.children || []) {
+        if (ch === card) break;
+        const p = tidOf(ch) === T_RP ? ch : qs(ch, S_RP);
+        if (p) {
+          pq(ch, !!(isRunOpen(p) && !isHidEl(ch, false, m) && !isHidEl(p, false, m)));
+        } else {
+          const tb = tidOf(ch) === 'input-box-bottom-toolbar' ? ch : qs(ch, S_TB);
+          const ttOn = !!(ea && !seenTt && tb && !isHidEl(ch, getLay(), m) && !isHidEl(tb, getLay(), m));
+          if (ttOn) seenTt = true;
+          ops.push([ch, A_TT, ttOn, '46px']);
+        }
+      }
+      for (const oldTt of qa(sh, '[' + A_TT + ']')) {
+        if (!ops.some(([el, a]) => a === A_TT && el === oldTt)) ops.push([oldTt, A_TT, false, '46px']);
+      }
     }
     let stop = sh && sh !== ib ? sh : card;
     while (stop?.[K_PE] && stop[K_PE] !== ib) stop = stop[K_PE];
@@ -1437,7 +1450,7 @@
     const mascotShouldPeek = Boolean(
       cPlan.awaitingDecision ||
       priPlan?.mo ||
-      priPlan?.ops?.some(([, , on]) => on) ||
+      priPlan?.ops?.some(([, attr, on]) => on && attr !== A_TT) ||
       pulseCoversPri ||
       ha(de(), 'data-ag-cs-model-menu') ||
       ga(de(), 'data-ag-pp-open') === '1' ||
@@ -3070,7 +3083,7 @@
       for (const [o, k] of [[sc, 'cancelDeferredHydration'], [0, disposeActiveHomeStudio], [sc, 'flushAllStreamArtifacts'], [0, restoreAllHostAnimatedIcons], [smoothCaretCtl, 'teardown'], [prismRimCtl, 'teardown'], [rippleCtl, 'unmount'], [convAuraCtl, 'unmount'], [sc, 'clearWorkedForAutoUnfoldAttrs'], [0, unmountCrab], [0, restoreHostTurbo]]) try { o ? o[k]() : k(); } catch {}
       qa(D, `[${A_PB}]`).forEach((e) => { ra(e, A_PB); rp(e, '--ag-px'); rp(e, '--ag-py'); });
       qa(D, '[data-ag-cs-effort]').forEach((e) => { ra(e, 'data-ag-cs-effort'); e[K_CL].remove('ag-cs-effort-badge'); });
-      qa(D, `[${A_Q}],[${A_TK}]`).forEach((e) => { ra(e, A_Q); ra(e, A_TK); rp(e, 'margin-bottom'); });
+      qa(D, `[${A_Q}],[${A_TK}],[${A_TT}]`).forEach((e) => { ra(e, A_Q); ra(e, A_TK); ra(e, A_TT); rp(e, 'margin-bottom'); });
       qa(D, '[data-ag-row-stagger]').forEach((e) => { ra(e, 'data-ag-row-stagger'); rp(e, '--ag-row-i'); });
       qa(D, '.agy-overlay,.agy-fastpick,[data-testid="context-menu-popup"],[data-testid="context-menu-submenu-popup"],[data-ag-cs-overview-shell]').forEach((e) => { rp(e, '--ag-origin-x'); rp(e, '--ag-origin-y'); });
       for (const s of 'placeholder|orch-active|model-overlay|aux-dual|overview-shell|prism-mirror|prism-reflect|settings-dlg|settings-nav|nav-active|conv-seat|conv-ripple-host|vp-wrap|home-sheet|row-running|menu-open|auto-unfolded|outer-open|caustic|fiber-camp|pane-camp|sonar|stage-glide|liftoff-bubble|thought-streaming|spark-streaming|prism-cv|code-folded|bg-cmd-wrap|input-layer|hdr-open|rich-pre|glide-item|crab-anchor|bleed'.split('|')) {

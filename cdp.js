@@ -11334,6 +11334,12 @@ const REMOVE_EXPRESSION = `(() => {
     document.querySelectorAll('[' + attr + ']').forEach((el) => el.removeAttribute(attr));
   });
   document.querySelectorAll('.ag-cs-inline-diff-box, .ag-cs-diff-ctx-menu, .ag-cs-sb-more-wrap').forEach((n) => n.remove());
+  document.querySelectorAll('[data-ag-cs-top-toolbar]').forEach((el) => {
+    el.removeAttribute('data-ag-cs-top-toolbar');
+    if (el.style && typeof el.style.removeProperty === 'function') {
+      el.style.removeProperty('margin-bottom');
+    }
+  });
   document.querySelectorAll('[data-ag-cs-prism-box]').forEach((el) => {
     el.removeAttribute('data-ag-cs-prism-box');
     if (el.style && typeof el.style.removeProperty === 'function') {

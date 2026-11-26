@@ -4048,3 +4048,160 @@ test('Channel 1 budget (< 684,500 B), periodicModelPicker default on, style.css 
     .filter((line) => !/^\s*(?:&|@|\/\*)/.test(line) && /:has\(/.test(line));
   assert.equal(topLevelHas.length, 0, 'style.css must contain 0 top-level :has() rules');
 });
+
+test('home toolbarPlacement="top" gets 46px mascot clearance and z-index:12 without forcing peek mode, and cleans up on off/remove', () => {
+  const timers = new Set();
+  function makeEl(tag, opts = {}) {
+    const attrs = new Map(Object.entries(opts.attrs || {}));
+    const styles = new Map();
+    const node = {
+      nodeType: 1,
+      tagName: tag.toUpperCase(),
+      id: opts.id || '',
+      className: opts.className || '',
+      hidden: false,
+      children: [],
+      parentElement: null,
+      parentNode: null,
+      textContent: opts.text || '',
+      style: {
+        setProperty(k, v) { styles.set(k, String(v)); },
+        getPropertyValue(k) { return styles.get(k) || ''; },
+        removeProperty(k) { styles.delete(k); },
+      },
+      classList: {
+        contains: (c) => String(node.className).split(/\s+/).includes(c),
+        add: (...cs) => { node.className = Array.from(new Set([...String(node.className).split(/\s+/).filter(Boolean), ...cs])).join(' '); },
+        remove: (...cs) => { node.className = String(node.className).split(/\s+/).filter((c) => !cs.includes(c)).join(' '); },
+      },
+      setAttribute(k, v) { attrs.set(k, String(v)); if (k === 'id') node.id = String(v); },
+      getAttribute(k) { return attrs.has(k) ? attrs.get(k) : null; },
+      hasAttribute(k) { return attrs.has(k); },
+      removeAttribute(k) { attrs.delete(k); if (k === 'id') node.id = ''; },
+      appendChild(c) { c.parentElement = node; c.parentNode = node; node.children.push(c); return c; },
+      removeChild(c) { node.children = node.children.filter((x) => x !== c); c.parentElement = null; c.parentNode = null; return c; },
+      remove() { if (node.parentElement) node.parentElement.removeChild(node); },
+      contains(target) { let cur = target; while (cur) { if (cur === node) return true; cur = cur.parentElement; } return false; },
+      getBoundingClientRect() { return { top: 0, left: 0, right: 640, bottom: 80, width: 640, height: 80 }; },
+      matches(sel) {
+        const matchOne = (el, part) => {
+          if (part.startsWith('#')) return el.id === part.slice(1).replace(/\\\./g, '.');
+          if (part.startsWith('.')) return el.classList.contains(part.slice(1));
+          const am = part.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/);
+          if (am) return am[2] !== undefined ? el.getAttribute(am[1]) === am[2] : el.hasAttribute(am[1]);
+          return false;
+        };
+        return sel.split(',').some((raw) => {
+          const parts = raw.trim().split(/\s+/).filter(Boolean);
+          if (!parts.length || !matchOne(node, parts[parts.length - 1])) return false;
+          let cur = node.parentElement;
+          for (let i = parts.length - 2; i >= 0; i--) {
+            while (cur && !matchOne(cur, parts[i])) cur = cur.parentElement;
+            if (!cur) return false;
+            cur = cur.parentElement;
+          }
+          return true;
+        });
+      },
+      closest(sel) { let c = node; while (c) { if (c.matches(sel)) return c; c = c.parentElement; } return null; },
+      querySelector(sel) { return node.querySelectorAll(sel)[0] || null; },
+      querySelectorAll(sel) {
+        const out = [];
+        const visit = (cur) => { for (const c of cur.children) { if (c.matches(sel)) out.push(c); visit(c); } };
+        visit(node);
+        return out;
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    return node;
+  }
+
+  const html = makeEl('html');
+  const head = makeEl('head');
+  const body = makeEl('body', { className: 'theme-dark' });
+  html.appendChild(head);
+  html.appendChild(body);
+
+  const home = makeEl('div', { className: 'agy-home' });
+  const inputBox = makeEl('div', { attrs: { 'data-testid': 'agent-input-box' } });
+  const composerShell = makeEl('div', { id: 'antigravity.agentSidePanelInputBox', className: 'surface-composer' });
+  const topToolbarWrap = makeEl('div', { className: 'relative z-[1]' });
+  const topToolbar = makeEl('div', { attrs: { 'data-testid': 'input-box-bottom-toolbar' }, text: 'Local checkout' });
+  topToolbarWrap.appendChild(topToolbar);
+  const card = makeEl('div', { className: 'surface-composer-card' });
+  card.appendChild(makeEl('div', { className: 'agy-composer-footer' }));
+  composerShell.appendChild(topToolbarWrap);
+  composerShell.appendChild(card);
+  inputBox.appendChild(composerShell);
+  home.appendChild(inputBox);
+  body.appendChild(home);
+
+  const doc = {
+    documentElement: html,
+    head,
+    body,
+    hidden: false,
+    readyState: 'complete',
+    createElement: (t) => makeEl(t),
+    getElementById: (id) => {
+      const find = (n) => (n.id === id ? n : n.children.map(find).find(Boolean) || null);
+      return find(html);
+    },
+    querySelector: (s) => html.querySelector(s),
+    querySelectorAll: (s) => html.querySelectorAll(s),
+    addEventListener() {},
+    removeEventListener() {},
+  };
+
+  const sandbox = {
+    window: null,
+    globalThis: null,
+    document: doc,
+    navigator: { language: 'zh-CN' },
+    location: { pathname: '/' },
+    localStorage: { _m: {}, getItem(k) { return this._m[k] || null; }, setItem(k, v) { this._m[k] = String(v); } },
+    getComputedStyle: () => ({ display: 'flex', visibility: 'visible', position: 'relative', getPropertyValue: () => '' }),
+    matchMedia: () => ({ matches: false }),
+    MutationObserver: class { observe() {} disconnect() {} },
+    ResizeObserver: class { observe() {} disconnect() {} },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame: () => {},
+    setTimeout: (fn, ms) => { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); return id; },
+    clearTimeout: (id) => { timers.delete(id); clearTimeout(id); },
+    setInterval: () => 1,
+    clearInterval: () => {},
+    performance: { now: () => Date.now() },
+    Node: { ELEMENT_NODE: 1 },
+    HTMLElement: function () {},
+    Math, Date, JSON, Map, Set, Array, Object, String, Number, Boolean, Promise, Uint8Array, Float32Array, Intl,
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+
+  try {
+    const res = vm.runInNewContext(cdp.buildInjectExpression(cdp.DEFAULT_CONFIG), sandbox);
+    assert.equal(res.status, 'ok');
+    vm.runInNewContext(cdp.buildMascotChannelExpression(cdp.DEFAULT_CONFIG), sandbox);
+    assert.equal(topToolbarWrap.getAttribute('data-ag-cs-top-toolbar'), '1', 'home top toolbar wrapper must get data-ag-cs-top-toolbar');
+    assert.equal(topToolbarWrap.style.getPropertyValue('margin-bottom'), '46px', 'home top toolbar wrapper must reserve 46px for mascot');
+    const crabStage = card.querySelector('.ag-cs-crab');
+    assert.ok(crabStage, 'mascot stage must mount on home composer card');
+    assert.equal(crabStage.getAttribute('data-ag-mascot-peek'), null, 'home top toolbar must NOT force mascot into peek mode');
+
+    const cssSrc = fs.readFileSync(path.join(path.dirname(require.resolve('../cdp.js')), 'style.css'), 'utf8');
+    assert.ok(cssSrc.includes('[data-ag-cs-top-toolbar="1"]{margin-bottom:46px !important;position:relative !important;z-index:12 !important;}'), 'style.css must lower top toolbar z-index to 12 below mascot stage 22');
+
+    sandbox.window.__agClaudeStyle.refreshConfig({ ...cdp.DEFAULT_CONFIG, mascot: 'off' });
+    assert.equal(topToolbarWrap.hasAttribute('data-ag-cs-top-toolbar'), false, 'mascot=off must clear data-ag-cs-top-toolbar');
+    assert.equal(topToolbarWrap.style.getPropertyValue('margin-bottom'), '', 'mascot=off must clear margin-bottom');
+
+    sandbox.window.__agClaudeStyle.refreshConfig(cdp.DEFAULT_CONFIG);
+    assert.equal(topToolbarWrap.getAttribute('data-ag-cs-top-toolbar'), '1');
+    vm.runInNewContext(cdp.REMOVE_EXPRESSION, sandbox);
+    assert.equal(topToolbarWrap.hasAttribute('data-ag-cs-top-toolbar'), false, 'REMOVE_EXPRESSION must strip data-ag-cs-top-toolbar');
+    assert.equal(topToolbarWrap.style.getPropertyValue('margin-bottom'), '', 'REMOVE_EXPRESSION must clear margin-bottom');
+  } finally {
+    for (const id of timers) clearTimeout(id);
+  }
+});
