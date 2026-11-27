@@ -1266,3 +1266,138 @@ test('#257: Velvet stream feathering — Layer A block reveal, Layer B 5-bucket 
     globalThis.cancelAnimationFrame = prevCaf;
   }
 });
+
+test('smooth-caret invalidates stale cache when inline decorator mounts before trailing text node and falls back to inline element right edge on collapsed element boundary', () => {
+  const smoothCaretMod = require('../smooth-caret.js');
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevGetCs = globalThis.getComputedStyle;
+  const prevRaf = globalThis.requestAnimationFrame;
+
+  const hostKids = [];
+  const makeEl = (tag) => {
+    const attrs = new Map();
+    return {
+      tagName: tag.toUpperCase(),
+      nodeName: tag.toUpperCase(),
+      nodeType: 1,
+      className: '',
+      style: {},
+      isConnected: true,
+      childNodes: [],
+      setAttribute(k, v) { attrs.set(k, String(v)); },
+      getAttribute(k) { return attrs.has(k) ? attrs.get(k) : null; },
+      hasAttribute(k) { return attrs.has(k); },
+      removeAttribute(k) { attrs.delete(k); },
+      remove() { this.isConnected = false; },
+    };
+  };
+
+  const trailingSpace = { nodeType: 3, nodeValue: ' ', textContent: ' ' };
+  const decoSpan = makeEl('span');
+  decoSpan.getBoundingClientRect = () => ({ left: 620, right: 691, top: 937, bottom: 954, width: 71, height: 17 });
+  const textWrapSpan = makeEl('span');
+  textWrapSpan.childNodes = [trailingSpace];
+  const pNode = makeEl('p');
+  pNode.childNodes = [decoSpan, textWrapSpan];
+  pNode.getBoundingClientRect = () => ({ left: 620, right: 1340, top: 937, bottom: 954, width: 720, height: 17 });
+  trailingSpace.parentNode = textWrapSpan;
+
+  const host = makeEl('div');
+  host.clientLeft = 0;
+  host.clientTop = 0;
+  host.scrollLeft = 0;
+  host.scrollTop = 0;
+  host.getBoundingClientRect = () => ({ left: 612, top: 925, width: 738, height: 40 });
+  host.appendChild = (ch) => { ch.isConnected = true; hostKids.push(ch); return ch; };
+  host.querySelector = (sel) => (sel.startsWith('.ag-cs-smooth-caret') ? hostKids.find((c) => c.className === 'ag-cs-smooth-caret') || null : null);
+
+  let edText = ' ';
+  let caretLeft = 623;
+  let useCollapsedBoundary = false;
+  let clientRects = () => [{ left: caretLeft, top: 935, height: 17 }];
+
+  const ed = makeEl('div');
+  ed.parentElement = host;
+  ed.scrollLeft = 0;
+  ed.scrollTop = 0;
+  ed.scrollHeight = 40;
+  ed.clientHeight = 40;
+  ed.childNodes = [pNode];
+  ed.firstChild = pNode;
+  Object.defineProperty(ed, 'textContent', { get: () => edText });
+  ed.contains = (n) => n === trailingSpace || n === pNode || n === decoSpan;
+  ed.querySelectorAll = () => [];
+  ed.getBoundingClientRect = () => ({ left: 612, right: 1350, top: 925, bottom: 965, width: 738, height: 40 });
+
+  globalThis.window = { devicePixelRatio: 1 };
+  globalThis.getComputedStyle = () => ({ paddingLeft: '8px', paddingTop: '10px', fontSize: '14px', lineHeight: '22px' });
+  globalThis.requestAnimationFrame = (cb) => { cb(); return 1; };
+  globalThis.document = {
+    activeElement: ed,
+    createElement: (tag) => makeEl(tag),
+    getSelection: () => {
+      const container = useCollapsedBoundary ? pNode : trailingSpace;
+      const offset = 1;
+      return {
+        rangeCount: 1,
+        isCollapsed: true,
+        focusNode: container,
+        focusOffset: offset,
+        getRangeAt: () => ({
+          collapsed: true,
+          startContainer: container,
+          startOffset: offset,
+          endContainer: container,
+          endOffset: offset,
+          getClientRects: clientRects,
+          getBoundingClientRect: () => ({ left: 0, top: 0, height: 0 }),
+        }),
+      };
+    },
+    querySelectorAll: (sel) => {
+      if (sel.includes('[contenteditable="true"]')) return [ed];
+      if (sel === '.ag-cs-smooth-caret') return hostKids;
+      return [];
+    },
+  };
+
+  try {
+    const ctl = smoothCaretMod.createSmoothCaretController({
+      isDestroyed: () => false,
+      isEnabled: () => true,
+      setAttrIfChanged(el, k, v) { if (el.getAttribute(k) !== v) el.setAttribute(k, v); },
+      runGuardedMut: (fn) => fn(),
+    });
+
+    // 1. Focusin before React decorator content mounts: trailing space sits at left=623 (dx=11px)
+    ctl.sync(false, false);
+    const caret = host.querySelector('.ag-cs-smooth-caret');
+    assert.equal(caret.style.transform, 'translate3d(11px, 10px, 0)');
+
+    // 2. Decorator mounts "gmail": focusNode/focusOffset/ed.childNodes.length stay identical, but ed.textContent grows
+    edText = 'gmail ';
+    caretLeft = 694;
+    ctl.sync(false, false);
+    assert.equal(caret.style.transform, 'translate3d(82px, 10px, 0)', 'Smooth caret must re-measure when decorator text mounts before same trailing text node');
+
+    // 3. Icon-only decorator resize with unchanged textContent: invalidateSelection forces re-measure
+    caretLeft = 710;
+    ctl.invalidateSelection();
+    ctl.sync(false, false);
+    assert.equal(caret.style.transform, 'translate3d(98px, 10px, 0)', 'invalidateSelection must bypass selectionSigCache even when text length stays constant');
+
+    // 4. Collapsed element boundary directly after inline decorator span with empty clientRects()
+    useCollapsedBoundary = true;
+    clientRects = () => [];
+    ctl.sync(false, false);
+    assert.equal(caret.style.transform, 'translate3d(79px, 12px, 0)', 'Element boundary after inline pill must align to pill.right (691 - 612 = 79px) rather than paragraph left');
+
+    ctl.teardown();
+  } finally {
+    globalThis.document = prevDoc;
+    globalThis.window = prevWin;
+    globalThis.getComputedStyle = prevGetCs;
+    globalThis.requestAnimationFrame = prevRaf;
+  }
+});

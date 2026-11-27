@@ -19,6 +19,7 @@
     let pendingCaretRefreshMetrics = false;
     let pendingCaretScroll = false;
     let editorMetricsEpoch = 1;
+    let selectionSigEpoch = 1;
     let cachedEditors = [];
     let lastEditorScanAt = 0;
     const editorMetricsCache = new WeakMap();
@@ -51,6 +52,10 @@
       editorMetricsEpoch += 1;
       lastEditorScanAt = 0;
       emptyCaretProbeCache = new WeakMap();
+    }
+
+    function invalidateSelection() {
+      selectionSigEpoch += 1;
     }
 
     function getCachedEditorMetrics(ed, forceRefresh = false) {
@@ -146,6 +151,20 @@
                   return checkScrollBounds(box);
                 }
               }
+              if (sc !== ed && childPrev && childPrev.nodeType === 1 && typeof childPrev.getBoundingClientRect === 'function') {
+                const isBlockNode = /^(P|DIV|BLOCKQUOTE|UL|OL|LI|PRE|H[1-6]|HR)$/i.test(childPrev.nodeName || '');
+                if (!isBlockNode) {
+                  const prevRect = childPrev.getBoundingClientRect();
+                  if (prevRect && prevRect.height > 0 && prevRect.right > 0) {
+                    return checkScrollBounds({
+                      collapsed: true,
+                      left: prevRect.right,
+                      top: prevRect.top,
+                      height: Math.min(estGlyphH, prevRect.height || estGlyphH),
+                    });
+                  }
+                }
+              }
               if (typeof sc.getBoundingClientRect === 'function' && sc !== ed) {
                 const scRect = sc.getBoundingClientRect();
                 if (scRect && (scRect.left > 0 || scRect.top > 0)) {
@@ -226,16 +245,21 @@
         const fNode = r0 && r0.endContainer !== undefined ? r0.endContainer : rc > 0 ? sel.focusNode : null;
         const fOff = r0 && typeof r0.endOffset === 'number' ? r0.endOffset : rc > 0 ? sel.focusOffset : -1;
         const childCnt = ed.childNodes ? ed.childNodes.length : 0;
-        const textSig =
+        const edTextLen = typeof ed.textContent === 'string' ? ed.textContent.length : 0;
+        const localTextLen =
           fNode && typeof fNode.nodeValue === 'string'
             ? fNode.nodeValue.length
-            : (ed.firstChild && typeof ed.firstChild.textContent === 'string' ? ed.firstChild.textContent.length : (ed.textContent || '').length);
+            : (ed.firstChild && typeof ed.firstChild.textContent === 'string' ? ed.firstChild.textContent.length : edTextLen);
+        const fParentChildCnt =
+          fNode && fNode.parentNode && fNode.parentNode.childNodes ? fNode.parentNode.childNodes.length : -1;
+        const textSig = `${edTextLen}:${localTextLen}:${fParentChildCnt}`;
         const prevSig = selectionSigCache.get(ed);
         const alreadySynced = Boolean(prevSig) && (ed.hasAttribute?.('data-ag-cs-smooth-caret') || prevSig.hidden);
         let sameSelection = false;
         if (!refreshMetrics && alreadySynced) {
           sameSelection =
             prevSig.epoch === editorMetricsEpoch &&
+            prevSig.selEpoch === selectionSigEpoch &&
             prevSig.rc === rc &&
             prevSig.isCollapsed === isCol &&
             prevSig.focusNode === fNode &&
@@ -262,6 +286,7 @@
         const hostRect = measured && measured.collapsed ? host.getBoundingClientRect() : null;
         selectionSigCache.set(ed, {
           epoch: editorMetricsEpoch,
+          selEpoch: selectionSigEpoch,
           rc,
           isCollapsed: isCol,
           focusNode: fNode,
@@ -420,6 +445,7 @@
     return {
       teardown,
       bumpMetricsEpoch,
+      invalidateSelection,
       measureSnapshot,
       applyMutations,
       sync,
